@@ -19,4 +19,5 @@ export const MIN_SIZE = 1;
 export const MAX_SIZE = 80;
 
 export const PAPER_COLOR = '#ffffff';
+export const PAPER_BORDER = '#cfd1d8';
 export const BACKDROP_COLOR = '#e6e7ec';

@@ -51,5 +51,5 @@ window.addEventListener('keydown', (e) => {
 
 // 개발 중 콘솔/자동 테스트용 디버그 핸들
 if (import.meta.env.DEV) {
-  (window as unknown as { __draw: unknown }).__draw = { viewport, store, tools };
+  (window as unknown as { __draw: unknown }).__draw = { viewport, store, tools, renderer };
 }

@@ -6,16 +6,19 @@ const widthAt = (s: Stroke, i: number) => {
   return s.size * (p === undefined ? 1 : 0.3 + 1.4 * p);
 };
 
-function applyStyle(ctx: CanvasRenderingContext2D, s: Stroke) {
+/**
+ * solid=true: 지우개 획도 불투명 검정으로 그린다(진행 중인 지우개 획의 모양만 담는 live 레이어용).
+ */
+function applyStyle(ctx: CanvasRenderingContext2D, s: Stroke, solid: boolean) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  if (s.tool === 'eraser') {
+  if (s.tool === 'eraser' && !solid) {
     // 획 레이어 위에서만 지운다(종이는 별도). 지우개도 하나의 획으로 기록된다.
     ctx.globalCompositeOperation = 'destination-out';
     ctx.strokeStyle = ctx.fillStyle = '#000';
   } else {
     ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = ctx.fillStyle = s.color;
+    ctx.strokeStyle = ctx.fillStyle = s.tool === 'eraser' ? '#000' : s.color;
   }
 }
 
@@ -25,7 +28,7 @@ function applyStyle(ctx: CanvasRenderingContext2D, s: Stroke) {
  * 점이 새로 추가될 때 (새 점 인덱스 - 1)번 구간만 그리면 증분 렌더링이 되고,
  * 획이 끝날 때 마지막 구간을 그리면 전체 다시 그리기와 결과가 같아진다.
  */
-export function drawSegment(ctx: CanvasRenderingContext2D, s: Stroke, i: number) {
+export function drawSegment(ctx: CanvasRenderingContext2D, s: Stroke, i: number, solid = false) {
   const pts = s.points;
   const n = pts.length;
   const p = pts[i];
@@ -33,7 +36,7 @@ export function drawSegment(ctx: CanvasRenderingContext2D, s: Stroke, i: number)
   const sy = i === 0 ? p[1] : (pts[i - 1][1] + p[1]) / 2;
   const ex = i === n - 1 ? p[0] : (p[0] + pts[i + 1][0]) / 2;
   const ey = i === n - 1 ? p[1] : (p[1] + pts[i + 1][1]) / 2;
-  applyStyle(ctx, s);
+  applyStyle(ctx, s, solid);
   ctx.lineWidth = widthAt(s, i);
   ctx.beginPath();
   ctx.moveTo(sx, sy);
@@ -42,21 +45,39 @@ export function drawSegment(ctx: CanvasRenderingContext2D, s: Stroke, i: number)
 }
 
 /** 점 하나짜리 획(탭) */
-export function drawDot(ctx: CanvasRenderingContext2D, s: Stroke) {
+export function drawDot(ctx: CanvasRenderingContext2D, s: Stroke, solid = false) {
   const p = s.points[0];
-  applyStyle(ctx, s);
+  applyStyle(ctx, s, solid);
   ctx.beginPath();
   ctx.arc(p[0], p[1], widthAt(s, 0) / 2, 0, Math.PI * 2);
   ctx.fill();
 }
 
-/** 획 전체 그리기 (확정된 획, 또는 진행 중인 획의 현재까지) */
-export function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
-  const n = s.points.length;
+/**
+ * 획 전체 그리기 (확정된 획, 또는 진행 중인 획의 현재까지).
+ * 필압이 없는 획은 굵기가 일정하므로 구간별 stroke() 대신 하나의 path 로 그린다(전체 다시 그리기 비용 절감).
+ * 곡선 구성은 drawSegment 와 동일하다.
+ */
+export function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke, solid = false) {
+  const pts = s.points;
+  const n = pts.length;
   if (n === 0) return;
   if (n === 1) {
-    drawDot(ctx, s);
+    drawDot(ctx, s, solid);
     return;
   }
-  for (let i = 0; i < n; i++) drawSegment(ctx, s, i);
+  if (pts[0][2] !== undefined) {
+    for (let i = 0; i < n; i++) drawSegment(ctx, s, i, solid);
+    return;
+  }
+  applyStyle(ctx, s, solid);
+  ctx.lineWidth = s.size;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  ctx.lineTo((pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2);
+  for (let i = 1; i < n - 1; i++) {
+    ctx.quadraticCurveTo(pts[i][0], pts[i][1], (pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2);
+  }
+  ctx.lineTo(pts[n - 1][0], pts[n - 1][1]);
+  ctx.stroke();
 }
