@@ -1,4 +1,5 @@
 import { serverNow } from '../sync/clock';
+import { MAX_POINTS_PER_STROKE } from './constants';
 import type { Renderer } from './renderer';
 import { simplify } from './simplify';
 import type { StrokeStore } from './store';
@@ -51,6 +52,12 @@ export class CanvasInput {
   private spaceDown = false;
   private rect: DOMRect;
   hooks: StrokeHooks | null = null;
+  /** false 면(보기 전용/획 한도) 그리지 않고, 한 손가락/마우스 드래그가 화면 이동이 된다 */
+  drawEnabled = true;
+  /** 내 커서/손가락 위치(논리 좌표)를 알려준다. leave: 캔버스를 벗어남 */
+  onCursor: ((x: number, y: number) => void) | null = null;
+  onCursorLeave: (() => void) | null = null;
+  private touchPanId: number | null = null;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -64,6 +71,7 @@ export class CanvasInput {
     canvas.addEventListener('pointermove', this.onMove);
     canvas.addEventListener('pointerup', (e) => this.onUp(e, false));
     canvas.addEventListener('pointercancel', (e) => this.onUp(e, true));
+    canvas.addEventListener('pointerleave', (e) => e.pointerType === 'mouse' && this.onCursorLeave?.());
     canvas.addEventListener('wheel', this.onWheel, { passive: false });
 
     // 브라우저 기본 동작 차단: 길게 누르기 메뉴, 선택, iOS 핀치 확대, 더블탭 확대
@@ -99,17 +107,20 @@ export class CanvasInput {
       this.canvas.setPointerCapture(e.pointerId);
       if (this.touches.size >= 2) {
         this.cancelStroke();
+        this.touchPanId = null;
         this.touchLocked = true;
         this.startGesture();
       } else if (!this.touchLocked) {
-        this.beginStroke(e);
+        if (this.drawEnabled) this.beginStroke(e);
+        else this.touchPanId = e.pointerId; // 보기 전용: 한 손가락으로 이동
       }
       return;
     }
 
     // 마우스 / 펜
     const wantsPan =
-      e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || (e.button === 0 && this.spaceDown));
+      e.pointerType === 'mouse' &&
+      (e.button === 1 || e.button === 2 || (e.button === 0 && (this.spaceDown || !this.drawEnabled)));
     if (wantsPan) {
       this.panId = e.pointerId;
       this.panLast = this.local(e);
@@ -117,6 +128,7 @@ export class CanvasInput {
       return;
     }
     if (e.button !== 0) return;
+    if (!this.drawEnabled) return;
     if (this.drawingId !== null) this.cancelStroke(); // 펜이 터치 획을 대체
     this.canvas.setPointerCapture(e.pointerId);
     this.beginStroke(e);
@@ -125,9 +137,17 @@ export class CanvasInput {
   private onMove = (e: PointerEvent) => {
     if (e.pointerType === 'touch') {
       if (!this.touches.has(e.pointerId)) return;
-      this.touches.set(e.pointerId, this.local(e));
-      if (this.gesture) this.updateGesture();
-      else if (e.pointerId === this.drawingId) this.extendStroke(e);
+      const prev = this.touches.get(e.pointerId)!;
+      const cur = this.local(e);
+      this.touches.set(e.pointerId, cur);
+      if (this.gesture) {
+        this.updateGesture();
+      } else if (e.pointerId === this.touchPanId) {
+        this.viewport.panBy(cur.x - prev.x, cur.y - prev.y);
+      } else if (e.pointerId === this.drawingId) {
+        this.extendStroke(e);
+        this.reportCursor(e);
+      }
       return;
     }
     if (e.pointerId === this.panId) {
@@ -136,12 +156,23 @@ export class CanvasInput {
       this.panLast = p;
     } else if (e.pointerId === this.drawingId) {
       this.extendStroke(e);
+      this.reportCursor(e);
+    } else if (e.pointerType === 'mouse') {
+      this.rect = this.canvas.getBoundingClientRect();
+      this.reportCursor(e); // 마우스는 누르지 않고 움직일 때도 위치를 알린다
     }
   };
+
+  private reportCursor(e: PointerEvent) {
+    if (!this.onCursor) return;
+    const [x, y] = this.viewport.screenToLogical(e.clientX - this.rect.left, e.clientY - this.rect.top);
+    this.onCursor(x, y);
+  }
 
   private onUp(e: PointerEvent, cancelled: boolean) {
     if (e.pointerType === 'touch') {
       if (!this.touches.delete(e.pointerId)) return;
+      if (e.pointerId === this.touchPanId) this.touchPanId = null;
       if (e.pointerId === this.drawingId) {
         if (cancelled) this.cancelStroke();
         else this.finishStroke(e);
@@ -231,6 +262,11 @@ export class CanvasInput {
     if (stroke.points.length > prevLen) {
       this.renderer.strokeExtended(stroke, prevLen);
       this.hooks?.extend(stroke);
+    }
+    // 획 하나가 너무 길어지면(서버 규칙의 포인트 상한) 여기서 끝내고 같은 지점에서 새 획으로 이어서 그린다
+    if (stroke.points.length >= MAX_POINTS_PER_STROKE) {
+      this.finishStroke(e);
+      this.beginStroke(e);
     }
   }
 

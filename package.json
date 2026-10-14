@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
-    "emulators": "npx firebase-tools emulators:start --only database,auth --project demo-onlinedraw"
+    "emulators": "npx firebase-tools emulators:start --only database,auth --project demo-onlinedraw",
+    "test:rules": "node scripts/test-rules.mjs"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

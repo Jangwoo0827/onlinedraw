@@ -198,3 +198,223 @@ input[type='range'] {
 #panel.erasing .swatches {
   opacity: 0.45;
 }
+
+/* ---------- STEP 4/5: 참가자, 메뉴, 커서, 미니맵, 토스트 ---------- */
+[hidden] {
+  display: none !important;
+}
+
+.btn.people {
+  position: relative;
+}
+.btn.people b {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+#cursors {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  transition: transform 0.1s linear, opacity 0.3s;
+  will-change: transform;
+}
+.cursor svg {
+  flex: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+}
+.cursor span {
+  margin-top: 12px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  /* 부모의 color(사용자 색)를 배경으로 쓰고 글자는 흰색 */
+  background: currentColor;
+  -webkit-text-fill-color: #fff;
+}
+
+#minimap {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: 96px;
+  height: 96px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  opacity: 0.92;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.popover {
+  position: fixed;
+  top: calc(48px + var(--safe-t) + 4px);
+  right: 8px;
+  z-index: 30;
+  min-width: 230px;
+  max-width: calc(100vw - 16px);
+  max-height: 65vh;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+  touch-action: manipulation;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+.menu-item:active {
+  background: var(--line);
+}
+.menu-item.danger {
+  color: #d32f2f;
+}
+.pop-head {
+  padding: 6px 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.name-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.name-edit input {
+  -webkit-user-select: text;
+  user-select: text;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 16px; /* 16px 미만이면 iOS 가 입력 시 화면을 확대한다 */
+  color: var(--fg);
+}
+.people {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.people button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+.people button:disabled {
+  cursor: default;
+}
+.people button:not(:disabled):active {
+  background: var(--line);
+}
+.people i {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.people .pname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.people em {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.banner {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+#panel.readonly .row,
+#panel.readonly .swatches {
+  display: none;
+}
+#panel.readonly .banner {
+  display: flex;
+}
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(150px + var(--safe-b));
+  z-index: 40;
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  border-radius: 20px;
+  background: rgba(28, 28, 33, 0.92);
+  color: #fff;
+  font-size: 13px;
+  text-align: center;
+  transform: translate(-50%, 8px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+}
+#toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}

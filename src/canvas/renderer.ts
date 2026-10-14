@@ -1,29 +1,41 @@
+import { strokeBounds, type Bounds } from './bounds';
 import { BACKDROP_COLOR, LOGICAL_H, LOGICAL_W, PAPER_BORDER, PAPER_COLOR } from './constants';
 import { StrokeCache } from './stroke-cache';
 import type { StrokeStore } from './store';
 import type { Stroke } from './types';
 import type { Viewport } from './viewport';
 
-/** base 캐시의 해상도(논리 1 당 픽셀). 이동/핀치 중에 늘려 그려도 덜 흐리도록 화면 맞춤 배율보다 넉넉하게. */
-const BASE_SCALE = 1.5;
+/** overview 캐시의 긴 변 픽셀 수. 판이 아무리 커도 전체를 이 크기의 저해상도 그림으로 항상 최신 상태로 유지한다. */
+const OVERVIEW_PX = 2048;
+const OVERVIEW_SCALE = Math.min(1.5, OVERVIEW_PX / Math.max(LOGICAL_W, LOGICAL_H));
+/** detail 캔버스는 화면보다 이만큼 크게 만들어, 조금 움직일 때는 다시 그리지 않고 평행 이동만 한다. */
+const OVERSCAN = 1.5;
 /** 뷰 변화가 멈춘 뒤 detail 을 다시 그리기까지의 대기 시간 */
 const SETTLE_MS = 120;
 
 /**
  * 레이어 구성 (확정된 획은 한 번 그려 캐싱해 두고, 프레임마다는 합성만 한다)
  *
- *  base   : 확정된 획. 논리 좌표 고정 해상도(BASE_SCALE). 뷰와 무관하므로 이동/줌 중에는 이걸 변환해서 보여준다.
- *  detail : 확정된 획. 현재 뷰 해상도로 정확히 그린 것. 뷰가 멈추면 시간을 쪼개 다시 만들고, 완성되면 base 대신 쓴다.
- *  live   : 지금 그리고 있는 내 획 하나(증분). 지우개 획은 모양만 담고 합성 때 아래 레이어를 지운다.
- *  remote : 다른 참가자가 지금 그리고 있는 획들(증분, 펜만). 획이 확정되면 store 로 옮겨가 base/detail 에 그려진다.
+ *  overview : 판 전체의 확정 획을 저해상도(OVERVIEW_SCALE)로. 뷰와 무관해서 이동/줌 중에도, 멀리서 볼 때도 항상 쓸 수 있다.
+ *  detail   : 현재 배율로 정확히 그린 확정 획. 화면의 1.5배 영역을 덮는다(보이는 영역과 겹치는 획만 그림).
+ *             뷰가 멈추면 시간을 쪼개 뒷버퍼에 다시 그려 완성되면 교체한다. 덮지 못하는 곳은 overview 가 대신 보인다.
+ *  live     : 지금 그리고 있는 내 획 하나(증분). 지우개 획은 모양만 담고 합성 때 아래 레이어를 지운다.
+ *  remote   : 다른 참가자가 지금 그리고 있는 획들(증분, 펜만).
  *
- * 확정된 획이 늘어날 때는 base/detail 에 그 획만 덧그리고(증분), 실행 취소처럼 되돌릴 때만 전체 다시 그리기를 한다.
+ * 확정된 획이 늘어날 때는 overview/detail 에 그 획만 덧그리고, 취소/삭제/순서 변경은 그 획의 영역만 다시 그린다.
+ * 전체 다시 그리기(renderAll)는 전체 지우기 같은 경우에만 쓴다.
  */
 export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private dpr = 1;
-  private base = this.newBase();
+  private overview = this.newOverview();
   private detail = new StrokeCache();
+  private detailBack = new StrokeCache();
+  private detailReady = false;
+  private detailBuilding = false;
+  private detailGen = 0; // 진행 중인 detail 렌더링을 취소하기 위한 세대 번호
+  private overviewGen = 0;
+  private overviewBusy = false;
   private live = new StrokeCache(true);
   private remoteLive = new StrokeCache();
   private remoteActive = new Map<string, Stroke>();
@@ -32,12 +44,9 @@ export class Renderer {
 
   private active: Stroke | null = null;
   private liveDirty = false;
-  private detailValid = false;
-  private detailGen = 0; // 진행 중인 detail 렌더링을 취소하기 위한 세대 번호
-  private baseGen = 0; // 진행 중인 base 전체 다시 그리기를 취소하기 위한 세대 번호
-  private baseBusy = false;
   private raf = 0;
   private settleTimer = 0;
+  private frameListeners = new Set<() => void>();
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -48,9 +57,20 @@ export class Renderer {
 
     viewport.onChange(() => this.onViewChanged());
     store.onChange((event, stroke) => {
+      if (event === 'history' || !stroke) return;
       if (event === 'add' || event === 'redo') this.drawCommitted(stroke); // 끝에 추가: 그 획만 덧그린다
-      else this.renderAll(); // undo / remove / reorder: 중간이 바뀌었으므로 전체
+      else if (event === 'reset') this.renderAll();
+      else this.redrawStrokeRegion(strokeBounds(stroke)); // undo / remove / reorder: 그 획의 영역만
     });
+  }
+
+  /** 합성이 끝날 때마다 호출 (미니맵 등) */
+  onFrame(cb: () => void) {
+    this.frameListeners.add(cb);
+  }
+
+  getOverviewCanvas() {
+    return this.overview.canvas;
   }
 
   /** cssW/cssH: CSS px 크기 */
@@ -60,7 +80,9 @@ export class Renderer {
     const h = cssH * this.dpr;
     this.canvas.width = Math.max(1, Math.round(w));
     this.canvas.height = Math.max(1, Math.round(h));
-    this.detail.resize(w, h);
+    this.detail.resize(w * OVERSCAN, h * OVERSCAN);
+    this.detailBack.resize(w * OVERSCAN, h * OVERSCAN);
+    this.detailReady = false;
     this.live.resize(w, h);
     this.remoteLive.resize(w, h);
     this.scratch = null;
@@ -68,37 +90,38 @@ export class Renderer {
     this.onViewChanged();
   }
 
-  /** base/detail 이 모두 최신이고 시간을 나눠 진행 중인 작업이 없는가 (테스트/디버그용) */
+  /** overview/detail 이 모두 최신이고 시간을 나눠 진행 중인 작업이 없는가 (테스트/디버그용) */
   get settled() {
-    return this.detailValid && !this.baseBusy;
+    return !this.overviewBusy && !this.detailBuilding && (!this.useDetail() || this.detailReady);
   }
 
   /**
-   * 전체 다시 그리기: 확정된 획 전체로 base 를 새로 만들고(백버퍼에 시간을 나눠 그린 뒤 교체),
-   * 이어서 detail 도 다시 만든다. (실행 취소 등) 획이 적으면 같은 틱에서 바로 끝난다.
+   * 전체 다시 그리기: 확정된 획 전체로 overview 를 새로 만들고(뒷버퍼에 시간을 나눠 그린 뒤 교체),
+   * 이어서 detail 도 다시 만든다. 전체 지우기 등 여러 획이 한꺼번에 바뀔 때만 쓴다.
    */
   renderAll() {
     this.detailGen++;
-    this.detailValid = false; // 되돌린 획이 남아 보이지 않도록 낡은 detail 은 즉시 버린다
-    const gen = ++this.baseGen;
-    this.baseBusy = true;
-    const next = this.newBase();
+    this.detailReady = false; // 낡은 detail 은 즉시 버린다
+    this.detailBuilding = false;
+    const gen = ++this.overviewGen;
+    this.overviewBusy = true;
+    const next = this.newOverview();
     next.renderSliced(
       this.store.strokes,
-      () => gen !== this.baseGen,
+      () => gen !== this.overviewGen,
       () => {
-        this.base = next;
-        this.baseBusy = false;
+        this.overview = next;
+        this.overviewBusy = false;
         this.rebuildDetail();
         this.schedule();
       },
     );
   }
 
-  private newBase() {
+  private newOverview() {
     const cache = new StrokeCache();
-    cache.resize(LOGICAL_W * BASE_SCALE, LOGICAL_H * BASE_SCALE);
-    cache.setView(BASE_SCALE, 0, 0);
+    cache.resize(LOGICAL_W * OVERVIEW_SCALE, LOGICAL_H * OVERVIEW_SCALE);
+    cache.setView(OVERVIEW_SCALE, 0, 0);
     return cache;
   }
 
@@ -115,7 +138,7 @@ export class Renderer {
     this.schedule();
   }
 
-  /** 획 종료: live 를 비운다. 확정된 획은 store.add 의 'add' 이벤트에서 base/detail 에 그려진다. */
+  /** 획 종료: live 를 비운다. 확정된 획은 store.add 의 'add' 이벤트에서 overview/detail 에 그려진다. */
   strokeFinished(_stroke: Stroke) {
     this.endActive();
   }
@@ -151,39 +174,83 @@ export class Renderer {
   // ---- 확정된 획 ----
 
   private drawCommitted(stroke: Stroke) {
-    this.base.drawStroke(stroke);
-    // detail 이 아직 만들어지는 중이면 store.strokes 를 순회하는 쪽이 이 획도 그려준다
-    if (this.detailValid) this.detail.drawStroke(stroke);
+    this.overview.drawStroke(stroke);
+    // detail 이 만들어지는 중이면 store.strokes 를 순회하는 쪽이 이 획도 그려준다
+    if (this.detailReady) this.detail.drawStroke(stroke);
+    this.schedule();
+  }
+
+  /** 한 획이 빠지거나 순서가 바뀐 경우: 그 영역과 겹치는 획만 순서대로 다시 그린다 */
+  private redrawStrokeRegion(region: Bounds) {
+    this.overview.redrawRegion(this.store.strokes, region);
+    if (this.detailReady) this.detail.redrawRegion(this.store.strokes, region);
+    if (this.detailBuilding) this.rebuildDetail(); // 만드는 중이던 뒷버퍼에는 이 변경이 반영되지 않았으므로 처음부터
     this.schedule();
   }
 
   private onViewChanged() {
-    this.detailGen++; // 진행 중이던 detail 렌더링 취소
-    this.detailValid = false;
+    this.detailGen++; // 진행 중이던 detail 렌더링 취소(완성된 detail 은 변환해서 계속 보여준다)
+    this.detailBuilding = false;
     this.liveDirty = true;
     this.remoteDirty = true;
     clearTimeout(this.settleTimer);
-    this.settleTimer = window.setTimeout(() => this.rebuildDetail(), SETTLE_MS);
+    this.settleTimer = window.setTimeout(() => this.onSettled(), SETTLE_MS);
     this.schedule();
   }
 
-  /** 현재 뷰 해상도로 확정된 획을 다시 그린다. 프레임당 일정 분량씩 나눠서 진행(획이 많아도 입력/화면이 끊기지 않게). */
+  /** 이 배율에서 overview(저해상도)보다 정밀한 detail 이 필요한가 */
+  private useDetail() {
+    return this.dpr * this.viewport.scale > OVERVIEW_SCALE * 1.3;
+  }
+
+  /** 뷰가 멈췄을 때: 지금 detail 이 쓸만하면 그대로(평행 이동만 한 경우), 아니면 다시 만든다 */
+  private onSettled() {
+    if (!this.useDetail()) {
+      this.detailReady = false;
+      return;
+    }
+    if (this.detailReady && this.detailFits()) return;
+    this.rebuildDetail();
+  }
+
+  /** 완성된 detail 이 현재 배율이고 화면(+10% 여유)을 덮는가 */
+  private detailFits() {
+    const k = this.dpr * this.viewport.scale;
+    if (Math.abs(k / this.detail.k - 1) > 0.02) return false;
+    const v = this.viewport.visibleRect();
+    const mx = (v.x1 - v.x0) * 0.1;
+    const my = (v.y1 - v.y0) * 0.1;
+    const d = this.detail.logicalRect();
+    return v.x0 - mx >= d.x0 && v.y0 - my >= d.y0 && v.x1 + mx <= d.x1 && v.y1 + my <= d.y1;
+  }
+
+  /**
+   * 현재 배율/위치를 중심으로 detail 을 뒷버퍼에 시간을 나눠 그리고, 완성되면 교체한다.
+   * 완성 전까지는 이전 detail(변환) 또는 overview 가 보이므로 깜빡이지 않는다.
+   */
   private rebuildDetail() {
     clearTimeout(this.settleTimer);
+    if (!this.useDetail()) return;
     const gen = ++this.detailGen;
-    this.detailValid = false;
+    this.detailBuilding = true;
     const { scale, x, y } = this.viewport;
     const d = this.dpr;
-    this.detail.setView(d * scale, d * x, d * y);
-    this.detail.clear();
-
-    this.detail.renderSliced(
+    const back = this.detailBack;
+    // 화면 중앙이 detail 캔버스 중앙에 오도록
+    const ox = d * x + (back.canvas.width - this.canvas.width) / 2;
+    const oy = d * y + (back.canvas.height - this.canvas.height) / 2;
+    back.setView(d * scale, ox, oy);
+    back.clear();
+    back.renderSliced(
       this.store.strokes,
       () => gen !== this.detailGen, // 뷰가 또 바뀌었거나 다시 시작됨
       () => {
-        this.detailValid = true;
+        [this.detail, this.detailBack] = [this.detailBack, this.detail];
+        this.detailReady = true;
+        this.detailBuilding = false;
         this.schedule();
       },
+      back.logicalRect(),
     );
   }
 
@@ -203,6 +270,7 @@ export class Renderer {
   private frame = () => {
     this.raf = 0;
     this.compose();
+    this.frameListeners.forEach((cb) => cb());
   };
 
   private redrawLive() {
@@ -268,16 +336,37 @@ export class Renderer {
     c.restore();
   }
 
-  /** detail 이 완성돼 있으면 그대로, 아니면 base 를 현재 뷰로 변환해서 그린다. */
+  /**
+   * 확정된 획을 t 에 그린다. 완성된 detail 이 있으면 그것을 현재 뷰로 변환해서 쓰고(덮는 영역),
+   * 덮지 못하는 곳은 overview 로 채운다. detail 이 없으면 overview 만 쓴다.
+   */
   private drawCommittedTo(t: CanvasRenderingContext2D) {
-    if (this.detailValid) {
-      t.drawImage(this.detail.canvas, 0, 0);
-      return;
-    }
     const { scale, x, y } = this.viewport;
     const d = this.dpr;
     t.imageSmoothingQuality = 'high';
-    t.drawImage(this.base.canvas, d * x, d * y, d * scale * LOGICAL_W, d * scale * LOGICAL_H);
+    const drawOverview = () =>
+      t.drawImage(this.overview.canvas, d * x, d * y, d * scale * LOGICAL_W, d * scale * LOGICAL_H);
+
+    if (!(this.useDetail() && this.detailReady)) {
+      drawOverview();
+      return;
+    }
+    // detail 픽셀 -> 현재 화면: 배율 s 만큼 늘리고 평행 이동 (줌 도중에는 s != 1 이라 잠깐 흐릿하다가 다시 그려지면 선명해진다)
+    const det = this.detail;
+    const s = (d * scale) / det.k;
+    const dx = d * x - det.ox * s;
+    const dy = d * y - det.oy * s;
+    const dw = det.canvas.width * s;
+    const dh = det.canvas.height * s;
+    // overview 는 detail 이 덮는 사각형 바깥에만 (even-odd 로 안쪽을 제외)
+    t.save();
+    t.beginPath();
+    t.rect(0, 0, this.canvas.width, this.canvas.height);
+    t.rect(dx, dy, dw, dh);
+    t.clip('evenodd');
+    drawOverview();
+    t.restore();
+    t.drawImage(det.canvas, dx, dy, dw, dh);
   }
 
   private getScratch() {

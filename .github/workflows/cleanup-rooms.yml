@@ -1,0 +1,51 @@
+name: Cleanup expired rooms
+
+# 마지막 활동 후 일정 기간(기본 30일)이 지난 방을 정리한다. Cloud Functions 없이 정기 실행(GitHub Actions)으로 처리한다.
+# 사용하려면 저장소 Settings → Secrets and variables → Actions 에 FIREBASE_SERVICE_ACCOUNT(서비스 계정 키 JSON)를 등록한다.
+# 등록하지 않으면 이 워크플로는 아무 것도 하지 않고 성공으로 끝난다.
+on:
+  schedule:
+    - cron: '17 3 * * 1' # 매주 월요일 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '지우지 않고 대상만 출력'
+        type: boolean
+        default: true
+      ttl_days:
+        description: '마지막 활동 후 보관 일수'
+        default: '30'
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: 서비스 계정 확인
+        id: check
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "FIREBASE_SERVICE_ACCOUNT 시크릿이 없어 건너뜁니다."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.run == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.run == 'true'
+        with:
+          node-version: 22
+      - name: 방 정리
+        if: steps.check.outputs.run == 'true'
+        env:
+          ROOM_TTL_DAYS: ${{ inputs.ttl_days || '30' }}
+          # 정기 실행(schedule)은 실제로 삭제하고, 수동 실행은 입력값(기본 dry-run)을 따른다
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
+        run: |
+          npm install --no-save --no-package-lock firebase-admin
+          node scripts/cleanup-rooms.mjs

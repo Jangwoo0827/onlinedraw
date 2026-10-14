@@ -1,9 +1,12 @@
 import type { Stroke } from './types';
 
-/** 필압 p(0..1) -> 굵기 배율. p=0.5가 1배. */
-const widthAt = (s: Stroke, i: number) => {
+/**
+ * 필압 p(0..1) -> 굵기 배율. p=0.5가 1배.
+ * minW: 이 캔버스에서 최소로 보이게 할 굵기(논리 단위, 보통 1 기기 픽셀). 크게 축소해서 볼 때 선이 사라지지 않게 한다.
+ */
+const widthAt = (s: Stroke, i: number, minW: number) => {
   const p = s.points[i][2];
-  return s.size * (p === undefined ? 1 : 0.3 + 1.4 * p);
+  return Math.max(minW, s.size * (p === undefined ? 1 : 0.3 + 1.4 * p));
 };
 
 /**
@@ -28,7 +31,7 @@ function applyStyle(ctx: CanvasRenderingContext2D, s: Stroke, solid: boolean) {
  * 점이 새로 추가될 때 (새 점 인덱스 - 1)번 구간만 그리면 증분 렌더링이 되고,
  * 획이 끝날 때 마지막 구간을 그리면 전체 다시 그리기와 결과가 같아진다.
  */
-export function drawSegment(ctx: CanvasRenderingContext2D, s: Stroke, i: number, solid = false) {
+export function drawSegment(ctx: CanvasRenderingContext2D, s: Stroke, i: number, solid = false, minW = 0) {
   const pts = s.points;
   const n = pts.length;
   const p = pts[i];
@@ -37,7 +40,7 @@ export function drawSegment(ctx: CanvasRenderingContext2D, s: Stroke, i: number,
   const ex = i === n - 1 ? p[0] : (p[0] + pts[i + 1][0]) / 2;
   const ey = i === n - 1 ? p[1] : (p[1] + pts[i + 1][1]) / 2;
   applyStyle(ctx, s, solid);
-  ctx.lineWidth = widthAt(s, i);
+  ctx.lineWidth = widthAt(s, i, minW);
   ctx.beginPath();
   ctx.moveTo(sx, sy);
   ctx.quadraticCurveTo(p[0], p[1], ex, ey);
@@ -45,11 +48,11 @@ export function drawSegment(ctx: CanvasRenderingContext2D, s: Stroke, i: number,
 }
 
 /** 점 하나짜리 획(탭) */
-export function drawDot(ctx: CanvasRenderingContext2D, s: Stroke, solid = false) {
+export function drawDot(ctx: CanvasRenderingContext2D, s: Stroke, solid = false, minW = 0) {
   const p = s.points[0];
   applyStyle(ctx, s, solid);
   ctx.beginPath();
-  ctx.arc(p[0], p[1], widthAt(s, 0) / 2, 0, Math.PI * 2);
+  ctx.arc(p[0], p[1], widthAt(s, 0, minW) / 2, 0, Math.PI * 2);
   ctx.fill();
 }
 
@@ -58,20 +61,20 @@ export function drawDot(ctx: CanvasRenderingContext2D, s: Stroke, solid = false)
  * 필압이 없는 획은 굵기가 일정하므로 구간별 stroke() 대신 하나의 path 로 그린다(전체 다시 그리기 비용 절감).
  * 곡선 구성은 drawSegment 와 동일하다.
  */
-export function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke, solid = false) {
+export function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke, solid = false, minW = 0) {
   const pts = s.points;
   const n = pts.length;
   if (n === 0) return;
   if (n === 1) {
-    drawDot(ctx, s, solid);
+    drawDot(ctx, s, solid, minW);
     return;
   }
   if (pts[0][2] !== undefined) {
-    for (let i = 0; i < n; i++) drawSegment(ctx, s, i, solid);
+    for (let i = 0; i < n; i++) drawSegment(ctx, s, i, solid, minW);
     return;
   }
   applyStyle(ctx, s, solid);
-  ctx.lineWidth = s.size;
+  ctx.lineWidth = Math.max(minW, s.size);
   ctx.beginPath();
   ctx.moveTo(pts[0][0], pts[0][1]);
   ctx.lineTo((pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2);
