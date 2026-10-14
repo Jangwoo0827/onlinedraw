@@ -2,10 +2,12 @@ import type { Stroke } from './types';
 
 /**
  * add / redo : 맨 끝에 한 획이 추가됨 (증분으로 그리면 된다)
- * undo / remove / reorder : 중간이 바뀌었으므로 전체 다시 그리기가 필요
+ * undo / remove / reorder : 중간이 바뀜 -> 그 획의 영역만 다시 그리면 된다
+ * reset : 여러 획이 한꺼번에 바뀜(전체 지우기) -> 전체 다시 그리기
+ * history : 화면은 그대로, 실행 취소/다시 실행 가능 여부만 바뀜
  */
-export type StoreEvent = 'add' | 'redo' | 'undo' | 'remove' | 'reorder';
-type Listener = (event: StoreEvent, stroke: Stroke) => void;
+export type StoreEvent = 'add' | 'redo' | 'undo' | 'remove' | 'reorder' | 'reset' | 'history';
+type Listener = (event: StoreEvent, stroke: Stroke | null) => void;
 
 /** 서버 타임스탬프 순, 같으면 id 순 — 모든 참가자에게 같은 순서를 보장한다. */
 export const compareStrokes = (a: Stroke, b: Stroke) =>
@@ -91,6 +93,23 @@ export class StrokeStore {
     return true;
   }
 
+  /** 조건에 맞는 획을 모두 지운다(전체 지우기). 지운 획들을 돌려준다. */
+  removeWhere(pred: (s: Stroke) => boolean): Stroke[] {
+    const removed = this.strokes.filter(pred);
+    if (!removed.length) return removed;
+    const keep = this.strokes.filter((s) => !pred(s));
+    this.strokes.length = 0;
+    this.strokes.push(...keep);
+    for (const s of removed) this.byId.delete(s.id);
+    this.emit('reset', removed[0]);
+    return removed;
+  }
+
+  clearRedo() {
+    this.redoStack.length = 0;
+    this.emit('history', null);
+  }
+
   /** 인증 후 내 uid 가 정해지면, 그 전에 그린 'local' 획을 내 것으로 바꾼다. 바뀐 획을 돌려준다. */
   adoptUid(uid: string): Stroke[] {
     this.uid = uid;
@@ -115,7 +134,7 @@ export class StrokeStore {
     return lo;
   }
 
-  private emit(event: StoreEvent, stroke: Stroke) {
+  private emit(event: StoreEvent, stroke: Stroke | null) {
     this.listeners.forEach((cb) => cb(event, stroke));
   }
 }

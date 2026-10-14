@@ -1,6 +1,108 @@
 {
   "rules": {
-    ".read": "auth != null",
-    ".write": "auth != null"
+    "rooms": {
+      "$room": {
+        ".validate": "$room.matches(/^[A-Za-z0-9_-]{6,40}$/)",
+
+        "meta": {
+          ".read": "auth != null",
+          "createdAt": {
+            ".write": "auth != null && !root.child('rooms/' + $room + '/meta/createdAt').exists()",
+            ".validate": "newData.val() == now"
+          },
+          "createdBy": {
+            ".write": "auth != null && !root.child('rooms/' + $room + '/meta/createdAt').exists()",
+            ".validate": "newData.val() == auth.uid"
+          },
+          "count": {
+            ".write": "auth != null && (root.child('rooms/' + $room + '/editors/' + auth.uid).exists() || !root.child('rooms/' + $room + '/meta/createdAt').exists())",
+            ".validate": "newData.isNumber() && newData.val() >= -1000000 && newData.val() <= 20000"
+          },
+          "lastActive": {
+            ".write": "auth != null && (root.child('rooms/' + $room + '/editors/' + auth.uid).exists() || !root.child('rooms/' + $room + '/meta/createdAt').exists())",
+            ".validate": "newData.val() == now"
+          },
+          "clearedAt": {
+            ".write": "auth != null && root.child('rooms/' + $room + '/editors/' + auth.uid).exists()",
+            ".validate": "newData.val() == now"
+          },
+          "$other": { ".validate": false }
+        },
+
+        "secret": {
+          "editKey": {
+            ".write": "auth != null && !root.child('rooms/' + $room + '/meta/createdAt').exists()",
+            ".validate": "newData.isString() && newData.val().length >= 12 && newData.val().length <= 40 && newData.val().matches(/^[A-Za-z0-9_-]+$/)"
+          },
+          "$other": { ".validate": false }
+        },
+
+        "editors": {
+          "$uid": {
+            ".write": "auth != null && auth.uid == $uid",
+            ".validate": "newData.isString() && newData.val() == root.child('rooms/' + $room + '/secret/editKey').val()"
+          }
+        },
+
+        "strokes": {
+          ".read": "auth != null",
+          ".indexOn": ["createdAt"],
+          "$id": {
+            ".write": "auth != null && ((!data.exists() && newData.exists() && root.child('rooms/' + $room + '/editors/' + auth.uid).exists() && newData.parent().parent().child('meta/count').val() == data.parent().parent().child('meta/count').val() + 1 && newData.parent().parent().child('meta/count').val() <= 20000) || (data.exists() && !newData.exists() && data.child('uid').val() == auth.uid))",
+            ".validate": "$id.matches(/^[A-Za-z0-9_-]{8,40}$/) && newData.hasChildren(['uid', 'color', 'size', 'tool', 'createdAt', 'n', 'pts'])",
+            "uid": { ".validate": "newData.val() == auth.uid" },
+            "color": { ".validate": "newData.isString() && newData.val().matches(/^#[0-9a-fA-F]{6}$/)" },
+            "size": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 200" },
+            "tool": { ".validate": "newData.val() == 'pen' || newData.val() == 'eraser'" },
+            "createdAt": { ".validate": "newData.val() == now" },
+            "n": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 1500" },
+            "pts": { ".validate": "newData.isString() && newData.val().length <= 32000 && newData.val().matches(/^[-0-9.,;]+$/)" },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "live": {
+          ".read": "auth != null",
+          "$id": {
+            ".write": "auth != null && root.child('rooms/' + $room + '/editors/' + auth.uid).exists() && (data.exists() ? data.child('uid').val() == auth.uid : (!newData.exists() || newData.child('uid').val() == auth.uid))",
+            ".validate": "$id.matches(/^[A-Za-z0-9_-]{8,40}$/) && newData.hasChildren(['uid', 'color', 'size', 'tool', 'pts'])",
+            "uid": { ".validate": "newData.val() == auth.uid" },
+            "color": { ".validate": "newData.isString() && newData.val().matches(/^#[0-9a-fA-F]{6}$/)" },
+            "size": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 200" },
+            "tool": { ".validate": "newData.val() == 'pen' || newData.val() == 'eraser'" },
+            "pts": {
+              "$chunk": { ".validate": "$chunk.matches(/^p[0-9]{4}$/) && newData.isString() && newData.val().length <= 8000 && newData.val().matches(/^[-0-9.,;]+$/)" }
+            },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "presence": {
+          ".read": "auth != null",
+          "$uid": {
+            ".write": "auth != null && auth.uid == $uid",
+            ".validate": "newData.hasChildren(['name', 'color', 'edit', 't'])",
+            "name": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20" },
+            "color": { ".validate": "newData.isString() && newData.val().matches(/^#[0-9a-fA-F]{6}$/)" },
+            "edit": { ".validate": "newData.isBoolean()" },
+            "t": { ".validate": "newData.val() == now" },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "cursors": {
+          ".read": "auth != null",
+          "$uid": {
+            ".write": "auth != null && auth.uid == $uid",
+            ".validate": "newData.hasChildren(['x', 'y'])",
+            "x": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 16000" },
+            "y": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 16000" },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "$other": { ".validate": false }
+      }
+    }
   }
 }
