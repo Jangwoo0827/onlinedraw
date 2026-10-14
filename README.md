@@ -49,6 +49,20 @@ rooms/{room}/live/{strokeId}      { uid, color, size, tool, pts: { p0000: "x,y;.
 
 설정값이 없으면 앱은 혼자 그리는 **로컬 모드**로 동작한다(상단에 "로컬 모드" 표시).
 
+## GitHub Pages 배포
+`.github/workflows/deploy.yml` 이 `main` 브랜치에 푸시될 때마다 빌드해서 Pages 에 올린다. 사이트 주소: `https://<깃허브아이디>.github.io/onlinedraw/`
+(빌드는 상대 경로(`base: './'`)라서 하위 경로에서도 동작한다. Firebase 웹 설정은 `.env.production` 에서 읽는다.)
+
+1. 작업 브랜치를 `main` 에 머지한다 (Pages 배포는 `main` 에서만 허용됨).
+2. GitHub 저장소 → **Settings → Pages → Build and deployment → Source: GitHub Actions** 로 변경.
+3. **Actions** 탭에서 `Deploy to GitHub Pages` 가 초록색으로 끝나면 위 주소로 접속된다. (처음에는 수동으로 *Run workflow* 해도 된다.)
+4. Firebase 콘솔 → **Authentication → Settings(설정) → 승인된 도메인** 에 `<깃허브아이디>.github.io` 를 추가한다.
+5. (권장) Google Cloud 콘솔 → *APIs 및 서비스 → 사용자 인증 정보* 에서 웹 API 키의 **HTTP 리퍼러 제한** 을
+   `https://<깃허브아이디>.github.io/*`, `http://localhost:*`, `http://192.168.*:*` 로 설정한다.
+
+> 주의: 지금 `database.rules.json` 은 "로그인한 사용자 누구나 읽기/쓰기"인 **임시 규칙**이다.
+> 주소를 불특정 다수에게 공개하기 전에 STEP 6 의 보안 규칙을 적용해야 한다.
+
 ## Firebase 없이 테스트 (에뮬레이터)
 Java 11+ 가 필요하다.
 ```bash
