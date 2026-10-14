@@ -58,7 +58,9 @@ rooms/{room}/live/{strokeId}      { uid, color, size, tool, pts: { p0000: "x,y;.
 3. **Actions** 탭에서 `Deploy to GitHub Pages` 가 초록색으로 끝나면 위 주소로 접속된다. (처음에는 수동으로 *Run workflow* 해도 된다.)
 4. Firebase 콘솔 → **Authentication → Settings(설정) → 승인된 도메인** 에 `<깃허브아이디>.github.io` 를 추가한다.
 5. (권장) Google Cloud 콘솔 → *APIs 및 서비스 → 사용자 인증 정보* 에서 웹 API 키의 **HTTP 리퍼러 제한** 을
-   `https://<깃허브아이디>.github.io/*`, `http://localhost:*`, `http://192.168.*:*` 로 설정한다.
+   `https://<깃허브아이디>.github.io/*`, `https://<프로젝트ID>.firebaseapp.com/*`, `http://localhost:*` 로 설정한다.
+   (IP 주소에는 `192.168.*` 같은 와일드카드를 쓸 수 없다. 폰에서 LAN 주소로 개발 테스트할 때는 `http://192.168.0.10:5173/*` 처럼
+   정확한 주소를 추가하거나, 개발 중에는 제한을 잠시 끈다.)
 
 > 주의: 지금 `database.rules.json` 은 "로그인한 사용자 누구나 읽기/쓰기"인 **임시 규칙**이다.
 > 주소를 불특정 다수에게 공개하기 전에 STEP 6 의 보안 규칙을 적용해야 한다.
