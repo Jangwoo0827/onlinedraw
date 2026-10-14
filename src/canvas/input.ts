@@ -1,4 +1,6 @@
+import { serverNow } from '../sync/clock';
 import type { Renderer } from './renderer';
+import { simplify } from './simplify';
 import type { StrokeStore } from './store';
 import type { ToolState } from './tool-state';
 import type { Point, Stroke } from './types';
@@ -10,6 +12,16 @@ const MIN_POINT_DIST_PX = 1.2;
 /** 충돌 가능성이 낮고, http(비보안 컨텍스트)에서도 동작하는 ID 생성 (crypto.randomUUID 는 https 전용) */
 export function newId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+/** 동기화 계층이 내 획의 생애주기를 받아볼 수 있게 하는 훅 */
+export interface StrokeHooks {
+  start(stroke: Stroke): void;
+  /** 점이 추가될 때마다 호출. 전송 간격 조절은 받는 쪽 책임 */
+  extend(stroke: Stroke): void;
+  /** 단순화가 끝나 store 에 확정된 직후 */
+  finish(stroke: Stroke): void;
+  cancel(stroke: Stroke): void;
 }
 
 interface Pt {
@@ -38,6 +50,7 @@ export class CanvasInput {
   private panLast: Pt = { x: 0, y: 0 };
   private spaceDown = false;
   private rect: DOMRect;
+  hooks: StrokeHooks | null = null;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -45,7 +58,6 @@ export class CanvasInput {
     private tools: ToolState,
     private store: StrokeStore,
     private renderer: Renderer,
-    private uid: string,
   ) {
     this.rect = canvas.getBoundingClientRect();
     canvas.addEventListener('pointerdown', this.onDown);
@@ -194,12 +206,12 @@ export class CanvasInput {
   private beginStroke(e: PointerEvent) {
     const stroke: Stroke = {
       id: newId(),
-      uid: this.uid,
+      uid: this.store.uid,
       color: this.tools.color,
       size: this.tools.size,
       tool: this.tools.tool,
       points: [],
-      createdAt: Date.now(),
+      createdAt: serverNow(),
     };
     this.stroke = stroke;
     this.drawingId = e.pointerId;
@@ -208,6 +220,7 @@ export class CanvasInput {
     stroke.points.push(this.toPoint(e));
     // 화면에는 첫 이동/떼는 시점에 처음 그린다(두 번째 손가락이 바로 닿는 핀치 시작 시 깜빡임 방지)
     this.renderer.beginStroke(stroke);
+    this.hooks?.start(stroke);
   }
 
   private extendStroke(e: PointerEvent) {
@@ -215,7 +228,10 @@ export class CanvasInput {
     const prevLen = stroke.points.length;
     const events = e.getCoalescedEvents?.();
     for (const ev of events && events.length ? events : [e]) this.pushPoint(stroke, ev, false);
-    if (stroke.points.length > prevLen) this.renderer.strokeExtended(stroke, prevLen);
+    if (stroke.points.length > prevLen) {
+      this.renderer.strokeExtended(stroke, prevLen);
+      this.hooks?.extend(stroke);
+    }
   }
 
   private finishStroke(e: PointerEvent) {
@@ -224,13 +240,17 @@ export class CanvasInput {
     this.pushPoint(stroke, e, true);
     if (stroke.points.length > prevLen) this.renderer.strokeExtended(stroke, prevLen);
     this.renderer.strokeFinished(stroke);
+    // 획이 끝나면 점을 줄인다. 허용 오차는 화면에서 약 0.5px 이내(너무 확대해 그린 획은 더 촘촘하게 유지)
+    stroke.points = simplify(stroke.points, Math.min(1, Math.max(0.1, 0.5 / this.viewport.scale)));
     this.store.add(stroke);
+    this.hooks?.finish(stroke);
     this.resetDrawing();
   }
 
   private cancelStroke() {
     if (!this.stroke) return;
     this.renderer.strokeCancelled();
+    this.hooks?.cancel(this.stroke);
     this.resetDrawing();
   }
 

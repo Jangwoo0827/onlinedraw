@@ -2,6 +2,7 @@ import { COLORS, MAX_SIZE, MIN_SIZE } from '../canvas/constants';
 import type { StrokeStore } from '../canvas/store';
 import type { ToolState } from '../canvas/tool-state';
 import type { Viewport } from '../canvas/viewport';
+import type { SyncStatus } from '../sync/room-sync';
 import { icons } from './icons';
 
 interface Deps {
@@ -20,11 +21,20 @@ function button(label: string, html: string, className = 'btn'): HTMLButtonEleme
   return b;
 }
 
+export type ConnectionView = SyncStatus | { state: 'local'; pending: 0 };
+
 export function mountToolbar(top: HTMLElement, panel: HTMLElement, { tools, store, viewport }: Deps) {
   // ---- 상단: 제목 + 실행 취소/다시 실행/전체 보기 ----
   const title = document.createElement('div');
   title.className = 'title';
-  title.textContent = '같이 그리기';
+  const name = document.createElement('div');
+  name.textContent = '같이 그리기';
+  const status = document.createElement('div');
+  status.className = 'status';
+  const statusDot = document.createElement('i');
+  const statusText = document.createElement('span');
+  status.append(statusDot, statusText);
+  title.append(name, status);
   const undoBtn = button('실행 취소 (Ctrl+Z)', icons.undo);
   const redoBtn = button('다시 실행 (Ctrl+Shift+Z)', icons.redo);
   const fitBtn = button('전체 보기', icons.fit);
@@ -105,4 +115,20 @@ export function mountToolbar(top: HTMLElement, panel: HTMLElement, { tools, stor
   viewport.onChange(syncPreview);
   syncTools();
   syncHistory();
+
+  // ---- 연결 상태 표시 ----
+  const LABEL: Record<ConnectionView['state'], string> = {
+    local: '로컬 모드 (Firebase 미설정)',
+    connecting: '연결 중…',
+    online: '연결됨',
+    offline: '재연결 중…',
+    error: '오류',
+  };
+  return {
+    setStatus(s: ConnectionView) {
+      status.dataset.state = s.state;
+      const extra = s.pending > 0 && s.state !== 'local' ? ` · 전송 대기 ${s.pending}` : '';
+      statusText.textContent = (s.state === 'error' && s.message ? s.message : LABEL[s.state]) + extra;
+    },
+  };
 }

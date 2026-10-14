@@ -14,7 +14,8 @@ const SETTLE_MS = 120;
  *
  *  base   : 확정된 획. 논리 좌표 고정 해상도(BASE_SCALE). 뷰와 무관하므로 이동/줌 중에는 이걸 변환해서 보여준다.
  *  detail : 확정된 획. 현재 뷰 해상도로 정확히 그린 것. 뷰가 멈추면 시간을 쪼개 다시 만들고, 완성되면 base 대신 쓴다.
- *  live   : 지금 그리고 있는 획 하나(증분). 지우개 획은 모양만 담고 합성 때 아래 레이어를 지운다.
+ *  live   : 지금 그리고 있는 내 획 하나(증분). 지우개 획은 모양만 담고 합성 때 아래 레이어를 지운다.
+ *  remote : 다른 참가자가 지금 그리고 있는 획들(증분, 펜만). 획이 확정되면 store 로 옮겨가 base/detail 에 그려진다.
  *
  * 확정된 획이 늘어날 때는 base/detail 에 그 획만 덧그리고(증분), 실행 취소처럼 되돌릴 때만 전체 다시 그리기를 한다.
  */
@@ -24,6 +25,9 @@ export class Renderer {
   private base = this.newBase();
   private detail = new StrokeCache();
   private live = new StrokeCache(true);
+  private remoteLive = new StrokeCache();
+  private remoteActive = new Map<string, Stroke>();
+  private remoteDirty = false;
   private scratch: HTMLCanvasElement | null = null; // 지우개 획이 진행 중일 때만 쓰는 합성용 버퍼
 
   private active: Stroke | null = null;
@@ -44,8 +48,8 @@ export class Renderer {
 
     viewport.onChange(() => this.onViewChanged());
     store.onChange((event, stroke) => {
-      if (event === 'undo') this.renderAll();
-      else this.drawCommitted(stroke); // add / redo: 그 획만 덧그린다
+      if (event === 'add' || event === 'redo') this.drawCommitted(stroke); // 끝에 추가: 그 획만 덧그린다
+      else this.renderAll(); // undo / remove / reorder: 중간이 바뀌었으므로 전체
     });
   }
 
@@ -58,6 +62,7 @@ export class Renderer {
     this.canvas.height = Math.max(1, Math.round(h));
     this.detail.resize(w, h);
     this.live.resize(w, h);
+    this.remoteLive.resize(w, h);
     this.scratch = null;
     this.viewport.setSize(cssW, cssH);
     this.onViewChanged();
@@ -120,6 +125,29 @@ export class Renderer {
     this.endActive();
   }
 
+  // ---- 다른 참가자의 진행 중인 획 (remote 레이어, 증분) ----
+
+  beginRemote(stroke: Stroke) {
+    this.remoteActive.set(stroke.id, stroke);
+    this.remoteDirty = true;
+    this.schedule();
+  }
+
+  /** prevLen 이후로 점이 추가됨. 지우개 획은 확정되기 전에는 보여주지 않는다. */
+  remoteExtended(stroke: Stroke, prevLen: number) {
+    if (!this.remoteActive.has(stroke.id)) return;
+    if (!this.remoteDirty && stroke.tool === 'pen') this.remoteLive.drawSegmentsFrom(stroke, prevLen);
+    this.schedule();
+  }
+
+  /** 진행 중 표시를 걷어낸다(확정되었거나 취소됨). 남은 획만 다시 그리므로 비용은 진행 중인 획 분량뿐. */
+  endRemote(id: string) {
+    if (this.remoteActive.delete(id)) {
+      this.remoteDirty = true;
+      this.schedule();
+    }
+  }
+
   // ---- 확정된 획 ----
 
   private drawCommitted(stroke: Stroke) {
@@ -133,6 +161,7 @@ export class Renderer {
     this.detailGen++; // 진행 중이던 detail 렌더링 취소
     this.detailValid = false;
     this.liveDirty = true;
+    this.remoteDirty = true;
     clearTimeout(this.settleTimer);
     this.settleTimer = window.setTimeout(() => this.rebuildDetail(), SETTLE_MS);
     this.schedule();
@@ -185,6 +214,17 @@ export class Renderer {
     if (this.active && this.active.points.length > 1) this.live.drawStroke(this.active);
   }
 
+  private redrawRemote() {
+    this.remoteDirty = false;
+    const { scale, x, y } = this.viewport;
+    const d = this.dpr;
+    this.remoteLive.setView(d * scale, d * x, d * y);
+    this.remoteLive.clear();
+    for (const s of this.remoteActive.values()) {
+      if (s.tool === 'pen' && s.points.length > 1) this.remoteLive.drawStroke(s);
+    }
+  }
+
   private compose() {
     const c = this.ctx;
     const { scale, x, y } = this.viewport;
@@ -207,6 +247,7 @@ export class Renderer {
     c.clip();
 
     if (this.liveDirty) this.redrawLive();
+    if (this.remoteDirty) this.redrawRemote();
     const active = this.active;
     if (active?.tool === 'eraser') {
       // 진행 중인 지우개: 확정된 획을 버퍼에 옮기고 live 모양만큼 지운 결과를 보여준다
@@ -223,6 +264,7 @@ export class Renderer {
       this.drawCommittedTo(c);
       if (active) c.drawImage(this.live.canvas, 0, 0);
     }
+    if (this.remoteActive.size) c.drawImage(this.remoteLive.canvas, 0, 0);
     c.restore();
   }
 

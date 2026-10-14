@@ -7,10 +7,14 @@
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "emulators": "npx firebase-tools emulators:start --only database,auth --project demo-onlinedraw"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
     "vite": "^8.3.4"
+  },
+  "dependencies": {
+    "firebase": "^13.0.0"
   }
 }
