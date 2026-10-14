@@ -1,0 +1,168 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1c1c21;
+  --muted: #8d8d93;
+  --line: #e2e3e8;
+  --accent: #3b6cf6;
+  --accent-soft: #e6edff;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+}
+
+* {
+  box-sizing: border-box;
+  /* 길게 누르기 선택/메뉴, 탭 하이라이트 차단 */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none; /* 당겨서 새로고침 / 가장자리 스와이프 방지 */
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Sans KR', sans-serif;
+  touch-action: none; /* 브라우저 기본 확대/스크롤 제스처 차단 (UI 컨트롤은 아래에서 개별 허용) */
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: calc(48px + var(--safe-t));
+  padding: var(--safe-t) 8px 0 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.title {
+  font-weight: 700;
+  font-size: 16px;
+}
+.actions {
+  display: flex;
+  gap: 2px;
+}
+
+#stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+#board {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+#panel {
+  flex: none;
+  padding: 8px 10px calc(10px + var(--safe-b));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.btn {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--fg);
+  touch-action: manipulation; /* 더블탭 확대 방지 */
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.btn:not(:disabled):active {
+  background: var(--line);
+}
+.btn.tool[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  margin: 0 4px;
+  accent-color: var(--accent);
+}
+.preview {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+}
+.preview i {
+  display: block;
+  border-radius: 50%;
+}
+.size-label {
+  width: 24px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.swatches {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+}
+.swatch {
+  position: relative;
+  flex: 1;
+  max-width: 44px;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+.swatch::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.swatch[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+#panel.erasing .swatches {
+  opacity: 0.45;
+}
